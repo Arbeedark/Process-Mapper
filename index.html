@@ -209,6 +209,21 @@ function parseImport(text){
   return o;
 }
 
+function buildBackup(procs){return JSON.stringify({app:'procmap',v:1,exported:Date.now(),procs:procs},null,1)}
+function mergeBackup(text,procs,mkid){
+  var o=JSON.parse(text);if(!o||!Array.isArray(o.procs))throw new Error('Not a backup');
+  var added=0,updated=0,same=0;
+  o.procs.forEach(function(q){
+    if(!q||!Array.isArray(q.nodes))return;
+    var ex=null;procs.forEach(function(x){if(x.id===q.id)ex=x});
+    if(!q.id){q.id=mkid()}
+    q.nodes.forEach(function(n){if(!n.id)n.id=mkid()});
+    if(!ex){procs.push(q);added++}
+    else if((q.updated||0)>(ex.updated||0)){procs[procs.indexOf(ex)]=q;updated++}
+    else same++;
+  });
+  return {added:added,updated:updated,same:same};
+}
 var UF={min:1,hr:60,day:480},UL={min:'min',hr:'h',day:'d'};
 function tgtIdx(p,next,i){var m=numMap(p);if(next==='end')return null;if(next&&next!=='next'&&m[next]&&m[next]-1!==i)return m[next]-1;return i+1<p.nodes.length?i+1:null}
 function fmtNum(x){return String(+(+x).toFixed(2))}
@@ -325,7 +340,7 @@ function libView(){
     var d=p.nodes.filter(function(n){return n.type==='decision'}).length;
     return '<div class="pcard" data-act="open" data-id="'+p.id+'"><div class="ic">'+I.flow+'</div><div style="min-width:0"><div class="t">'+esc(p.title||'Untitled process')+'</div><div class="m">'+p.nodes.length+' steps · '+d+' decision'+(d===1?'':'s')+' · '+fmt(p.updated)+'</div></div><span class="chev">'+I.chev+'</span></div>';
   }).join('');
-  return '<header class="top"><div class="brand"><span class="logo">'+I.flow+'</span>Process Mapper</div><button class="hbtn" data-act="import">Import</button></header>'+
+  return '<header class="top"><div class="brand"><span class="logo">'+I.flow+'</span>Process Mapper</div><div style="display:flex;gap:8px"><button class="hbtn" data-act="backup">Backup</button><button class="hbtn" data-act="import">Import</button></div></header>'+
   '<main>'+(memOnly?'<div class="banner">This view can\'t save on your device, so maps vanish when you close it. Email each map to yourself to keep it.</div>':'')+
   '<div class="eyebrow">Library</div><h1>Your <em>processes.</em></h1>'+(list||'<div class="empty"><b>Nothing mapped yet</b>Tap New process to start.</div>')+'</main>'+
   '<button class="fab" data-act="new">+ New process</button>';
@@ -552,6 +567,35 @@ function mailSheet(){
 }
 function menuSheet(){
   openSheet('<h2>Process options</h2><div class="row" style="flex-direction:column"><button class="btn" data-act="dupproc">Duplicate this process</button><button class="btn danger" data-act="delproc">Delete this process</button><button class="btn sm" data-act="close">Close</button></div>');
+}
+function backupSheet(){
+  var n=db.procs.length;
+  openSheet('<h2>Backup &amp; restore</h2><div class="hint">Your maps live only on this phone. Save a backup file now and then so you can put them all back if the phone is lost or the browser is cleared.</div>'+
+  '<div class="row" style="margin-top:12px"><button class="btn primary" data-act="dobackup">Save backup ('+n+' map'+(n===1?'':'s')+')</button></div><div class="hint" id="bkMsg"></div>'+
+  '<label class="lbl">Restore from a backup</label><input type="file" id="bkFile" accept=".json,application/json,text/plain" class="field" style="padding-top:12px"><div class="hint">Restoring adds the maps in the file. It never deletes what you have, and a newer copy of a map replaces an older one.</div><div class="hint" id="rsMsg"></div>'+
+  '<div class="row"><button class="btn" data-act="close">Close</button></div>');
+}
+function doRestore(text){
+  var m=$('#rsMsg');
+  try{var r=mergeBackup(text,db.procs,uid);save();render2();
+    m.textContent='Restored: '+r.added+' added, '+r.updated+' updated, '+r.same+' already up to date.'}
+  catch(e){m.textContent='That file isn\'t a Process Mapper backup.'}
+}
+function render2(){var t=$('#sheet');render();$('#sheet').classList.add('open');document.body.classList.add('lock')}
+async function saveBackup(){
+  var m=$('#bkMsg'),name='process-mapper-backup-'+new Date().toISOString().slice(0,10)+'.json',txt=buildBackup(db.procs),blob=new Blob([txt],{type:'application/json'});
+  var file=null;try{file=new File([blob],name,{type:'application/json'})}catch(e){}
+  if(file&&navigator.canShare&&navigator.canShare({files:[file]})){
+    try{await navigator.share({files:[file],title:'Process Mapper backup'});m.textContent='Share sheet opened. Save it to Drive or email it to yourself.';return}
+    catch(e){if(e&&e.name==='AbortError'){m.textContent='Cancelled.';return}}
+  }
+  var dl=null;try{dl=window.claude&&await window.claude.use('downloads')}catch(e){}
+  if(dl){
+    try{await dl.save({filename:name,data:blob});m.textContent='Backup handed to your device.';return}
+    catch(e){m.textContent=(e&&e.code==='declined')?'Cancelled.':'Couldn\'t save here.';return}
+  }
+  try{var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();m.textContent='Backup downloaded.'}
+  catch(e){m.textContent='Couldn\'t create the file here.'}
 }
 function importSheet(){
   openSheet('<h2>Import a map</h2><div class="hint">Paste an emailed map that includes backup data, or a backup block.</div><textarea class="field" id="imp" rows="8" placeholder="Paste here…" style="margin-top:10px"></textarea><div class="hint" id="impMsg"></div><div class="row"><button class="btn primary" data-act="doimport">Import</button><button class="btn" data-act="close">Cancel</button></div>');
@@ -1015,6 +1059,8 @@ document.addEventListener('click',function(e){
     if(armed!=='dp'){armed='dp';el.textContent='Tap again to delete for good';setTimeout(function(){armed=null},3000);return}
     armed=null;db.procs=db.procs.filter(function(x){return x.id!==state.id});save();state={view:'lib',id:null};closeSheet();}
   else if(a==='import'){importSheet();}
+  else if(a==='backup'){backupSheet();}
+  else if(a==='dobackup'){saveBackup();}
   else if(a==='doimport'){
     try{var o=parseImport($('#imp').value);o.id=uid();o.updated=Date.now();o.title=o.title||'Imported process';
       o.nodes.forEach(function(n){n.id=n.id||uid()});
@@ -1033,7 +1079,8 @@ document.addEventListener('input',function(e){
   else if(t.dataset.e){db.email=t.value;save();updMail();}
   else if(t.id==='bk'){updMail();}
 });
-document.addEventListener('change',function(e){if(e.target.id==='bk')updMail();else if(e.target.dataset&&e.target.dataset.tt)readTime();});
+document.addEventListener('change',function(e){
+  if(e.target.id==='bkFile'){var f=e.target.files&&e.target.files[0];if(f){var rd=new FileReader();rd.onload=function(){doRestore(String(rd.result))};rd.onerror=function(){$('#rsMsg').textContent='Couldn\'t read that file.'};rd.readAsText(f)}return}if(e.target.id==='bk')updMail();else if(e.target.dataset&&e.target.dataset.tt)readTime();});
 
 init();render();
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('sw.js').catch(function(){})}
