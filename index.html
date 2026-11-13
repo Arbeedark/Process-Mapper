@@ -1,12 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<title>Process Mapper</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
@@ -14,6 +8,13 @@
 <meta name="apple-mobile-web-app-title" content="Process Map">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<title>Process Mapper</title>
 <style>
 :root{
   --bg:#f8f9f6; --surface:#ffffff; --ink:#17382f; --muted:#5d7268; --line:#d5ded7; --soft:#e9eee9;
@@ -138,6 +139,25 @@ main.mapmain{padding-bottom:calc(230px + env(safe-area-inset-bottom))}
 .mp-r .btn{min-width:0}
 .btn.yes{background:var(--lime);border-color:rgba(0,0,0,.2);color:#000}
 .btn.no{background:var(--purple);border-color:var(--purple);color:#fff}
+
+.tcard{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.tc{border-radius:16px;padding:12px 14px}
+.tc span{display:block;font-size:11px;font-weight:800;letter-spacing:1.6px}
+.tc b{display:block;font-size:26px;letter-spacing:-.4px;margin-top:2px}
+.tc.best{background:var(--lime);color:#000}
+.tc.worst{background:var(--purple);color:#fff}
+.tnote{grid-column:1/-1;font-size:12.5px;color:var(--muted);margin:0 2px}
+.trow{display:flex;gap:8px;align-items:center}
+.trow .field{min-width:0;flex:1}
+.trow select{flex:1.3}
+.tto{color:var(--muted);font-weight:600}
+.tpaths{display:flex;gap:10px;margin:12px 0 0}
+.tpaths button{flex:1;height:40px;border-radius:12px;border:2px solid transparent;font-weight:700;cursor:pointer;font-size:14px;opacity:.7}
+.tpaths button.on{opacity:1;border-color:#000}
+.tpaths .best{background:var(--lime);color:#000}
+.tpaths .worst{background:var(--purple);color:#fff}
+.mapwrap.tp{height:calc(100vh - 484px);height:calc(100dvh - 484px)}
+.mp-k.bestk{background:var(--lime);color:#000}
 </style>
 </head>
 <body>
@@ -159,11 +179,13 @@ function buildText(p,opts){
   var decs=nodes.filter(function(n){return n.type==='decision'}).length;
   L.push('PROCESS MAP: '+(p.title&&p.title.trim()?p.title.trim():'Untitled process'));
   L.push(steps+' step'+(steps===1?'':'s')+' · '+decs+' decision'+(decs===1?'':'s')+(pdf?' · full flowchart attached (PDF)':''));
+  var T=calcTimes(p);
+  if(T.any&&(T.best||T.worst)){L.push('Time: best case '+(T.best?fmtDur(T.best.t):'n/a')+' · worst case '+(T.worst?fmtDur(T.worst.t):'n/a'));L.push('('+timeNote(T)+')');}
   if(p.notes&&p.notes.trim()){L.push('');L.push(rule);L.push('OVERVIEW');L.push(p.notes.trim());}
   L.push('');L.push(rule);L.push('FLOW');L.push('');
   if(!nodes.length){L.push('(no steps yet)');}
   nodes.forEach(function(n,i){
-    var t=((n.text||'').trim()||'(untitled)'),own=(n.owner&&n.owner.trim())?'  ['+n.owner.trim()+']':'';
+    var t=((n.text||'').trim()||'(untitled)'),own=[(n.owner||'').trim(),fmtRange(n)].filter(Boolean).join(' · ');own=own?'  ['+own+']':'';
     var pre=n.type==='decision'?'DECISION: ':n.type==='end'?'END: ':'';
     L.push((i+1)+'. '+pre+t+own);
     if(n.type==='decision'){
@@ -185,6 +207,67 @@ function parseImport(text){
   var o=m?dec(m[1].replace(/\s+/g,'')):JSON.parse(text);
   if(!o||!Array.isArray(o.nodes))throw new Error('Not a process map');
   return o;
+}
+
+var UF={min:1,hr:60,day:480},UL={min:'min',hr:'h',day:'d'};
+function tgtIdx(p,next,i){var m=numMap(p);if(next==='end')return null;if(next&&next!=='next'&&m[next]&&m[next]-1!==i)return m[next]-1;return i+1<p.nodes.length?i+1:null}
+function fmtNum(x){return String(+(+x).toFixed(2))}
+function fmtDur(m){
+  m=Math.round(m);if(m<60)return m+' min';
+  if(m<480){var h=Math.floor(m/60),r=m%60;return h+' h'+(r?' '+r+' min':'')}
+  var d=Math.floor(m/480),rem=m-d*480,h2=Math.floor(rem/60),r2=rem%60,s=d+' d';
+  if(h2)s+=' '+h2+' h';else if(r2)s+=' '+r2+' min';
+  return s;
+}
+function fmtRange(n){
+  if(!n||n.type!=='step')return '';
+  var a=n.tmin==null?null:+n.tmin,b=null;if(a==null&&b==null)return '';
+  var lo=a==null?b:a,hi=b==null?lo:Math.max(b,lo),u=UF[n.tunit]?n.tunit:'min',f=UF[u];
+  return (hi>lo?fmtNum(lo/f)+'–'+fmtNum(hi/f):fmtNum(lo/f))+' '+UL[u];
+}
+function nodeCost(n){
+  if(n.type!=='step')return [0,0];
+  var a=n.tmin==null?null:+n.tmin,b=null;if(a==null&&b==null)return [0,0];
+  var lo=a==null?b:a,hi=b==null?lo:Math.max(b,lo);return [lo,hi];
+}
+function calcTimes(p){
+  var N=p.nodes.length,steps=0,timed=0,i;
+  for(i=0;i<N;i++){var n=p.nodes[i];if(n.type==='step'){steps++;if(n.tmin!=null||n.tmax!=null)timed++}}
+  var r={any:timed>0,steps:steps,timed:timed,best:null,worst:null};
+  if(!r.any||!N)return r;
+  var succ=[],term=[];
+  p.nodes.forEach(function(n2,j){
+    var o=[];
+    if(n2.type==='decision'){['yes','no'].forEach(function(b){o.push(tgtIdx(p,(n2[b]||{}).next,j))})}
+    else if(n2.type!=='end'){o.push(j+1<N?j+1:null)}
+    succ[j]=o.filter(function(t){return t!=null});
+    term[j]=n2.type==='end'||o.some(function(t){return t==null});
+  });
+  var dist=[],prev=[],done=[];
+  for(i=0;i<N;i++)dist[i]=Infinity;
+  dist[0]=nodeCost(p.nodes[0])[0];
+  for(var it=0;it<N;it++){
+    var u=-1;for(i=0;i<N;i++)if(!done[i]&&dist[i]<Infinity&&(u<0||dist[i]<dist[u]))u=i;
+    if(u<0)break;done[u]=true;
+    succ[u].forEach(function(v){var c=dist[u]+nodeCost(p.nodes[v])[0];if(c<dist[v]){dist[v]=c;prev[v]=u}});
+  }
+  var bi=-1;for(i=0;i<N;i++)if(term[i]&&dist[i]<Infinity&&(bi<0||dist[i]<dist[bi]))bi=i;
+  if(bi>=0){var pa=[],c=bi;while(c!=null&&pa.length<=N+1){pa.unshift(c);c=prev[c]}r.best={t:dist[bi],path:pa}}
+  var visits=[],budget=200000,bw=null;
+  for(i=0;i<N;i++)visits[i]=0;
+  (function dfs(u,cost,path){
+    if(budget--<=0)return;
+    visits[u]++;path.push(u);cost+=nodeCost(p.nodes[u])[1];
+    if(term[u]&&(!bw||cost>bw.t))bw={t:cost,path:path.slice()};
+    succ[u].forEach(function(v){if(visits[v]<2)dfs(v,cost,path)});
+    path.pop();visits[u]--;
+  })(0,0,[]);
+  if(bw){var seen={},loop=false;bw.path.forEach(function(x){if(seen[x])loop=true;seen[x]=1});bw.loop=loop;r.worst=bw}
+  return r;
+}
+function timeNote(T){
+  var big=Math.max(T.best?T.best.t:0,T.worst?T.worst.t:0)>=480;
+  return T.timed+' of '+T.steps+' step'+(T.steps===1?'':'s')+' timed'+(T.worst&&T.worst.loop?' · loops counted once':'')+(big?' · 1 d = 8 working hrs':'');
 }
 // </logic>
 
@@ -257,8 +340,18 @@ function item(p,n,i){
   }else body='<div class="txt">'+(n.text?esc(n.text):ph(n.type==='end'?'Tap to describe the outcome':'Tap to describe this step'))+'</div>';
   var meta='';
   if(n.owner)meta+='<span class="tagm">👤 '+esc(n.owner)+'</span>';
+  var trg=fmtRange(n);if(trg)meta+='<span class="tagm">⏱ '+esc(trg)+'</span>';
   if(n.note)meta+='<span class="tagm">📝 '+esc(trunc(n.note.replace(/\n/g,' '),48))+'</span>';
   return '<div class="item"><div class="dot '+n.type+'"><span>'+(i+1)+'</span></div><div class="card '+n.type+'" data-act="edit" data-id="'+n.id+'"><div class="kind">'+n.type.toUpperCase()+'</div>'+body+(meta?'<div class="meta">'+meta+'</div>':'')+'</div></div>';
+}
+function timeCard(T){
+  if(!T.any||(!T.best&&!T.worst))return '';
+  return '<div class="tcard"><div class="tc best"><span>BEST CASE</span><b>'+(T.best?fmtDur(T.best.t):'n/a')+'</b></div><div class="tc worst"><span>WORST CASE</span><b>'+(T.worst?fmtDur(T.worst.t):'n/a')+'</b></div><div class="tnote">'+timeNote(T)+'</div></div>';
+}
+function pathBtns(T){
+  if(!T.any||(!T.best&&!T.worst))return '';
+  function b(m,l,pp){return pp?'<button data-act="path" data-m="'+m+'" class="'+m+(state.pathMode===m?' on':'')+'">'+l+' · '+fmtDur(pp.t)+'</button>':''}
+  return '<div class="tpaths">'+b('best','Best case',T.best)+b('worst','Worst case',T.worst)+'</div>';
 }
 function procView(){
   var p=cur(),mode=db.mode==='map'?'map':'list';
@@ -271,7 +364,7 @@ function procView(){
   '<main'+(mode==='map'?' class="mapmain"':'')+'><input class="field titlein" data-pf="title" placeholder="Name this process" value="'+esc(p.title)+'">'+tog+
   (mode==='map'?mapBlock(p):
   '<textarea class="field" data-pf="notes" rows="2" style="margin-top:10px" placeholder="Overview and notes (optional): purpose, owner, tools, when it runs">'+esc(p.notes)+'</textarea>'+
-  '<div class="chips"><span class="chip">'+st+' step'+(st===1?'':'s')+'</span><span class="chip">'+dc+' decision'+(dc===1?'':'s')+'</span></div>'+flow)+'</main>'+
+  '<div class="chips"><span class="chip">'+st+' step'+(st===1?'':'s')+'</span><span class="chip">'+dc+' decision'+(dc===1?'':'s')+'</span></div>'+timeCard(calcTimes(p))+flow)+'</main>'+
   (mode==='map'?mapPanel(p):'<div class="bar"><div class="in"><button class="add step" data-act="add" data-t="step">+ Step</button><button class="add decision" data-act="add" data-t="decision">+ Decision</button><button class="add end" data-act="add" data-t="end">+ End</button></div></div>');
 }
 
@@ -321,20 +414,22 @@ function svgNode(v,opac,sel){
   if(sel)ring+='</g>';
   return '<g class="mn" style="opacity:'+opac+'"'+act+'>'+ring+g+'</g>';
 }
-function mapSvg(G,sel,z,via){
+function mapSvg(G,sel,z,via,hl){
   var near={},out=[],selDec=sel!=null&&G.nodes[sel]&&G.nodes[sel].type==='decision';
   if(sel!=null){near[sel]=1;if(!selDec)G.edges.forEach(function(e){if(e.from===sel)near[e.to]=1})}
   if(via&&via.to===sel)near[via.from]=.75;
   var labels=[];
+  function ek(e){return (e.from>=G.N?'s':e.from)+'>'+(e.to>=G.N?'v':e.to)}
+  if(hl)G.edges.forEach(function(e){if(hl.edges[ek(e)]&&e.to>=G.N)near[e.to]=1});
   G.edges.forEach(function(e){
     var r=route(G,e),pts=r.pts,n=pts.length,a=pts[n-2],b=pts[n-1],dx=Math.sign(b.x-a.x),dy=Math.sign(b.y-a.y),AH=17;
     var q=pts.slice();q[n-1]={x:b.x-dx*AH,y:b.y-dy*AH};
-    var col=e.kind==='yes'?MC.dec:e.kind==='no'?MC.step:'#4f6b61',taken=via&&via.to===sel&&e.from===via.from&&e.kind===via.kind,op=sel==null?1:taken?1:(e.from===sel?(selDec?.35:1):.16),w=(taken||(sel!=null&&e.from===sel&&!selDec))?5:3.5;
+    var col=e.kind==='yes'?MC.dec:e.kind==='no'?MC.step:'#4f6b61',taken=via&&via.to===sel&&e.from===via.from&&e.kind===via.kind,onp=hl&&hl.edges[ek(e)],op=hl?(onp?1:.16):(sel==null?1:taken?1:(e.from===sel?(selDec?.35:1):.16)),w=(onp||taken||(!hl&&sel!=null&&e.from===sel&&!selDec))?5:3.5;
     out.push('<g opacity="'+op+'"><path d="'+pathStr(q,18)+'" fill="none" stroke="'+col+'" stroke-width="'+w+'" stroke-linecap="round"/><polygon fill="'+col+'" points="'+b.x+','+b.y+' '+(b.x-dx*AH-dy*9)+','+(b.y-dy*AH+dx*9)+' '+(b.x-dx*AH+dy*9)+','+(b.y-dy*AH-dx*9)+'"/></g>');
     if(e.kind!=='seq'){var yes=e.kind==='yes',pos=r.useR?{x:r.sr.x+44,y:r.sr.y-26}:{x:r.sb.x+48,y:r.sb.y+26};
       labels.push('<g class="lbl" data-act="mnext" data-from="'+e.from+'" data-i="'+e.to+'" data-k="'+e.kind+'" opacity="'+Math.max(op,.45)+'"><rect x="'+(pos.x-52)+'" y="'+(pos.y-30)+'" width="104" height="60" fill="transparent"/><rect x="'+(pos.x-34)+'" y="'+(pos.y-17)+'" width="68" height="34" rx="17" fill="'+(yes?MC.lime:MC.step)+'"'+(yes?' stroke="rgba(0,0,0,.25)" stroke-width="2"':'')+'/><text x="'+pos.x+'" y="'+(pos.y+7)+'" text-anchor="middle" font-size="19" font-weight="800" letter-spacing="3" fill="'+(yes?'#000':'#fff')+'">'+(yes?'YES':'NO')+'</text></g>')}
   });
-  var nodes=G.nodes.map(function(v){return svgNode(v,sel==null?1:(near[v.i]===undefined?.4:(near[v.i]===true?1:near[v.i])),sel===v.i)}).join('');
+  var nodes=G.nodes.map(function(v){var o=hl?((hl.nodes[v.i]||v.start||near[v.i])?1:.4):(sel==null?1:(near[v.i]===undefined?.4:(near[v.i]===true?1:near[v.i])));return svgNode(v,o,sel===v.i)}).join('');
   return '<svg id="msvg" xmlns="http://www.w3.org/2000/svg" width="'+Math.round(G.natW*z)+'" height="'+Math.round(G.natH*z)+'" viewBox="0 0 '+G.natW+' '+G.natH+'" style="font-family:Outfit,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif">'+out.join('')+nodes+labels.join('')+'</svg>';
 }
 function mapBlock(p){
@@ -342,12 +437,18 @@ function mapBlock(p){
   var G=buildGraph(p);sizeGraph(mctx,G);curG=G;
   var ww=Math.min(window.innerWidth,640)-32;
   if(state.zoom==null)state.zoom=Math.max(.5,Math.min(1,ww/G.natW));
-  var z=state.zoom,sel=(state.sel!=null&&state.sel<p.nodes.length)?state.sel:null;
-  return '<div class="legend"><span><i class="lg step"></i>Step</span><span><i class="lg dec"></i>Decision</span><span><i class="lg end"></i>End</span></div>'+
-   '<div class="mapbox"><div class="zoom"><button data-act="zout" aria-label="Zoom out">&minus;</button><button data-act="zfit" aria-label="Fit">Fit</button><button data-act="zin" aria-label="Zoom in">+</button></div><div class="mapwrap" id="mapwrap">'+mapSvg(G,sel,z,state.via)+'</div></div>';
+  var z=state.zoom,sel=(state.sel!=null&&state.sel<p.nodes.length)?state.sel:null,T=calcTimes(p),hl=null;
+  if(state.pathMode&&!state.sel&&state.sel!==0){var pp=state.pathMode==='best'?T.best:T.worst;
+    if(pp){hl={nodes:{},edges:{'s>0':1}};pp.path.forEach(function(x,k){hl.nodes[x]=1;if(k<pp.path.length-1)hl.edges[x+'>'+pp.path[k+1]]=1});hl.edges[pp.path[pp.path.length-1]+'>v']=1}}
+  return pathBtns(T)+'<div class="legend"><span><i class="lg step"></i>Step</span><span><i class="lg dec"></i>Decision</span><span><i class="lg end"></i>End</span></div>'+
+   '<div class="mapbox"><div class="zoom"><button data-act="zout" aria-label="Zoom out">&minus;</button><button data-act="zfit" aria-label="Fit">Fit</button><button data-act="zin" aria-label="Zoom in">+</button></div><div class="mapwrap'+(T.any&&(T.best||T.worst)?' tp':'')+'" id="mapwrap">'+mapSvg(G,sel,z,state.via,hl)+'</div></div>';
 }
 function mapPanel(p){
   var i=state.sel,n=(i!=null&&p.nodes[i])?p.nodes[i]:null,h='<div class="mpanel">';
+  if(state.pathMode&&i==null){
+    var T2=calcTimes(p),pm=state.pathMode,pp2=pm==='best'?T2.best:T2.worst,other=pm==='best'?'worst':'best';
+    if(pp2){return h+'<div class="mp-h"><span class="mp-k '+(pm==='best'?'bestk':'')+'">'+(pm==='best'?'BEST CASE':'WORST CASE')+'</span><span class="mp-sp"></span><button class="mp-b" data-act="path" data-m="'+pm+'">Clear</button></div><div class="mp-t">'+fmtDur(pp2.t)+'</div><div class="mp-s">Route: '+pp2.path.map(function(x){return x+1}).join(' → ')+'</div><div class="mp-s">'+(pm==='worst'&&pp2.loop?'Loops are counted once. ':'')+'Steps without a time count as 0.</div><div class="row mp-r"><button class="btn sm" data-act="path" data-m="'+other+'">Show '+other+' case</button></div></div>'}
+  }
   if(!p.nodes.length)return h+'<div class="mp-s">Add steps in List view to build your map.</div></div>';
   if(!n)return h+'<div class="mp-t">Follow the flow</div><div class="mp-s">Tap any box on the map, or start at the beginning and tap through.</div><div class="row" style="margin-top:10px"><button class="btn primary" data-act="mstart">Start at step 1</button></div></div>';
   var kind=n.type.toUpperCase(),hist=(state.hist&&state.hist.length)?'':' disabled style="opacity:.4"';
@@ -363,7 +464,14 @@ function mapPanel(p){
   else{var t2=tgtIdx(p,'next',i);h+=go('Next','primary',t2)}
   return h+'</div></div>';
 }
+function parseNum(v){v=String(v).replace(',','.').trim();if(v==='')return null;var x=parseFloat(v);return isFinite(x)&&x>=0?x:null}
+function readTime(){
+  var p=cur(),n=p&&ctx&&p.nodes.filter(function(x){return x.id===ctx.id})[0];if(!n)return;
+  var u=$('#tu').value,f=UF[u]||1,a=parseNum($('#tf1').value);
+  n.tunit=u;n.tmin=a==null?null:a*f;n.tmax=null;touch();
+}
 function selectNode(i,push,via){
+  state.pathMode=null;
   state.hist=state.hist||[];state.via=via||null;
   if(push&&state.sel!=null&&state.sel!==i)state.hist.push(state.sel);
   state.sel=i;render();
@@ -407,7 +515,9 @@ function editSheet(){
       return '<div class="bgrp '+b+'"><h3>IF '+b.toUpperCase()+'</h3><input class="field" data-f="'+b+'.text" placeholder="Then do… (optional)" value="'+esc(br.text)+'"><select class="field" data-f="'+b+'.next">'+nodeOpts(p,n,br.next)+'</select></div>'}).join(''):
     '<label class="lbl">'+(n.type==='end'?'Outcome':'What happens')+'</label><textarea class="field" data-f="text" rows="3" placeholder="'+(n.type==='end'?'e.g. Close the ticket':'e.g. Check order date and payment')+'">'+esc(n.text)+'</textarea>';
   var owner=n.type==='end'?'':'<label class="lbl">Owner / who does it</label><input class="field" data-f="owner" placeholder="Optional" value="'+esc(n.owner)+'">';
-  openSheet('<h2>Step '+(i+1)+'</h2>'+seg+main+owner+
+  var tu=UF[n.tunit]?n.tunit:'min',tf=UF[tu],ta=n.tmin==null?'':fmtNum(n.tmin/tf),tb=n.tmax==null?'':fmtNum(n.tmax/tf);
+  var timeF=n.type==='step'?'<label class="lbl">Time taken (optional)</label><div class="trow"><input class="field" id="tf1" data-tt="1" inputmode="decimal" placeholder="e.g. 15" value="'+ta+'"><select class="field" id="tu" data-tt="1">'+['min','hr','day'].map(function(u){return '<option value="'+u+'"'+(u===tu?' selected':'')+'>'+({min:'minutes',hr:'hours',day:'days'})[u]+'</option>'}).join('')+'</select></div><div class="hint">Optional. A day counts as 8 working hours.</div>':'';
+  openSheet('<h2>Step '+(i+1)+'</h2>'+seg+main+owner+timeF+
    '<label class="lbl">Notes</label><textarea class="field" data-f="note" rows="3" placeholder="Tips, links, exceptions, things to remember">'+esc(n.note)+'</textarea>'+
    '<div class="row"><button class="btn sm" data-act="up"'+(i===0?' disabled style="opacity:.4"':'')+'>↑ Move up</button><button class="btn sm" data-act="down"'+(i===p.nodes.length-1?' disabled style="opacity:.4"':'')+'>↓ Move down</button></div>'+
    '<div class="row"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm danger" data-act="del">Delete</button></div>'+
@@ -486,7 +596,6 @@ function fit(ctx,t,maxW){t=String(t);if(ctx.measureText(t).width<=maxW)return t;
 function pdate(){return new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}).toUpperCase()}
 function mkCanvas(w,h){var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.fillStyle=C.bg;x.fillRect(0,0,w,h);return c}
 function ptitle(p){return (p.title&&p.title.trim())||'Untitled process'}
-function tgtIdx(p,next,i){var m=numMap(p);if(next==='end')return null;if(next&&next!=='next'&&m[next]&&m[next]-1!==i)return m[next]-1;return i+1<p.nodes.length?i+1:null}
 
 function bandFull(ctx,W){
   ctx.fillStyle='#000';ctx.fillRect(0,0,W,134);ctx.fillStyle=C.lime;ctx.fillRect(0,134,W,8);
@@ -538,6 +647,19 @@ function summaryPage(p){
     setF(ctx,'700',17);ctx.fillStyle=C.muted;spaced(ctx,t[1],x+24,y+132,3);
   });
   y+=150+50;
+  var T=calcTimes(p);
+  if(T.any&&(T.best||T.worst)){
+    var cw2=(maxW-20)/2;
+    [['BEST CASE',T.best,C.lime,'#000'],['WORST CASE',T.worst,C.purple,'#fff']].forEach(function(c,k){
+      var x=PM+k*(cw2+20);
+      ctx.fillStyle=c[2];rr(ctx,x,y,cw2,142,20);ctx.fill();
+      setF(ctx,'800',18);ctx.fillStyle=c[3];spaced(ctx,c[0],x+26,y+38,4);
+      setF(ctx,'700',58);ctx.fillStyle=c[3];ctx.textAlign='left';ctx.fillText(c[1]?fmtDur(c[1].t):'n/a',x+26,y+98);
+      if(c[1]){setF(ctx,'500',20);ctx.globalAlpha=.85;ctx.fillText(fit(ctx,'via steps '+c[1].path.map(function(q){return q+1}).join(' › '),cw2-52),x+26,y+128);ctx.globalAlpha=1}
+    });
+    setF(ctx,'500',21);ctx.fillStyle=C.muted;ctx.textAlign='left';ctx.fillText(timeNote(T),PM,y+142+30);
+    y+=142+30+40;
+  }
   if(p.notes&&p.notes.trim()){
     y=secHead(ctx,'OVERVIEW',y);
     setF(ctx,'400',30);var nl=clampL(ctx,wrapT(ctx,p.notes,maxW),7,maxW);
@@ -623,12 +745,12 @@ function buildGraph(p){
   nodes.forEach(function(v,i){v.rank=rank[i];v.col=col[i]});
   var st={i:nodes.length,n:{text:'Start'},type:'end',virtual:true,start:true,rank:0,col:col[0]};
   nodes.push(st);edges.push({from:st.i,to:0,kind:'seq'});
-  return {nodes:nodes,edges:edges};
+  return {nodes:nodes,edges:edges,N:N};
 }
 function sizeGraph(ctx,G){
   G.nodes.forEach(function(v){
     if(v.virtual){v.w=150;v.h=62;return}
-    var t=(v.n.text&&v.n.text.trim())||'(untitled)',ow=(v.n.owner||'').trim();
+    var t=(v.n.text&&v.n.text.trim())||'(untitled)',ow=[(v.n.owner||'').trim(),fmtRange(v.n)].filter(Boolean).join(' · ');
     if(v.type==='decision'){setF(ctx,'600',25);v.lines=clampL(ctx,wrapT(ctx,t,196),3,196);v.w=DW;v.h=v.lines.length*34+120}
     else if(v.type==='end'){setF(ctx,'600',26);v.lines=clampL(ctx,wrapT(ctx,t,262),3,262);v.w=320;v.h=Math.max(84,v.lines.length*34+44)}
     else{setF(ctx,'600',26);v.lines=clampL(ctx,wrapT(ctx,t,284),3,284);v.owner=ow?fit(ctx,ow,284):'';v.w=NW;v.h=Math.max(100,v.lines.length*34+(ow?36:0)+40)}
@@ -741,7 +863,7 @@ function flowPages(p,m){
 
 /* ----- detail table ----- */
 function detailPages(p,m){
-  var cw=[60,156,394,190,272],cx=[PM],i;for(i=1;i<5;i++)cx.push(cx[i-1]+cw[i-1]);
+  var cw=[60,150,350,170,110,232],cx=[PM],i;for(i=1;i<6;i++)cx.push(cx[i-1]+cw[i-1]);
   var pad=16,rows=[];
   p.nodes.forEach(function(n,i){
     setF(m,'600',27);var dl=wrapT(m,(n.text&&n.text.trim())||'(untitled)',cw[2]-pad*2),h=dl.length*36+8,br=[];
@@ -749,9 +871,9 @@ function detailPages(p,m){
       ['yes','no'].forEach(function(b){var x=n[b]||{},d=dest(p,x.next,i);setF(m,'500',24);
         var bl=wrapT(m,((x.text&&x.text.trim())||'No action')+'  →  '+d.label,cw[2]-pad*2-76);br.push({b:b,lines:bl});h+=Math.max(34,bl.length*32)+10});
     }
-    setF(m,'500',24);var ol=wrapT(m,(n.owner||'').trim(),cw[3]-pad*2),nl=wrapT(m,(n.note||'').trim(),cw[4]-pad*2);
-    var H=Math.max(h,ol.length*32,nl.length*32)+pad*2+4;H=Math.max(H,84);
-    rows.push({i:i,n:n,dl:dl,br:br,ol:ol,nl:nl,H:H});
+    setF(m,'500',24);var ol=wrapT(m,(n.owner||'').trim(),cw[3]-pad*2),tl2=wrapT(m,fmtRange(n),cw[4]-pad*2),nl=wrapT(m,(n.note||'').trim(),cw[5]-pad*2);
+    var H=Math.max(h,ol.length*32,tl2.length*32,nl.length*32)+pad*2+4;H=Math.max(H,84);
+    rows.push({i:i,n:n,dl:dl,br:br,ol:ol,tl:tl2,nl:nl,H:H});
   });
   var pages=[],first=true,lim=PH-130,y,c,ctx,k=0;
   function newPage(){
@@ -759,7 +881,7 @@ function detailPages(p,m){
     y=82+40;
     if(first){setF(ctx,'700',46);ctx.fillStyle=C.ink;ctx.textAlign='left';ctx.fillText('Step-by-step detail',PM,y+46);y+=82}
     ctx.fillStyle='#000';ctx.fillRect(PM,y,PW-PM*2,60);
-    setF(ctx,'800',18);ctx.fillStyle=C.lime;['#','TYPE','WHAT HAPPENS','OWNER','NOTES'].forEach(function(t,j){spaced(ctx,t,cx[j]+pad,y+38,3)});
+    setF(ctx,'800',18);ctx.fillStyle=C.lime;['#','TYPE','WHAT HAPPENS','OWNER','TIME','NOTES'].forEach(function(t,j){spaced(ctx,t,cx[j]+pad,y+38,3)});
     y+=60;pages.push(c);first=false;k=0;
   }
   newPage();
@@ -783,7 +905,8 @@ function detailPages(p,m){
       by+=hh+10;
     });
     setF(ctx,'500',24);ctx.fillStyle=C.ink;r.ol.forEach(function(l,j){ctx.fillText(l,cx[3]+pad,y+pad+26+j*32)});
-    ctx.fillStyle=C.muted;r.nl.forEach(function(l,j){ctx.fillText(l,cx[4]+pad,y+pad+26+j*32)});
+    ctx.fillStyle=C.ink;r.tl.forEach(function(l,j){ctx.fillText(l,cx[4]+pad,y+pad+26+j*32)});
+    ctx.fillStyle=C.muted;r.nl.forEach(function(l,j){ctx.fillText(l,cx[5]+pad,y+pad+26+j*32)});
     y+=r.H;k++;
   });
   return pages;
@@ -874,6 +997,7 @@ document.addEventListener('click',function(e){
     if(armed!=='del'){armed='del';el.textContent='Tap again to delete';setTimeout(function(){armed=null},3000);return}
     armed=null;var id=ctx.id;p.nodes=p.nodes.filter(function(x){return x.id!==id});touch();ctx=null;closeSheet();}
   else if(a==='mode'){db.mode=el.dataset.m;save();render();}
+  else if(a==='path'){var m2=el.dataset.m;state.pathMode=state.pathMode===m2?null:m2;state.sel=null;state.via=null;render();}
   else if(a==='mnode'){selectNode(+el.dataset.i,true);}
   else if(a==='mnext'){var fr=el.dataset.from!=null?+el.dataset.from:state.sel;if(fr!==state.sel)state.sel=fr;selectNode(+el.dataset.i,true,{from:fr,to:+el.dataset.i,kind:el.dataset.k||'seq'});}
   else if(a==='mstart'){state.hist=[];selectNode(0,false);}
@@ -905,10 +1029,11 @@ document.addEventListener('input',function(e){
   var t=e.target,p=state.view==='proc'?cur():null;
   if(t.dataset.pf&&p){p[t.dataset.pf]=t.value;touch();}
   else if(t.dataset.f&&ctx&&p){var n=p.nodes.filter(function(x){return x.id===ctx.id})[0];if(n){setPath(n,t.dataset.f,t.value);touch();}}
+  else if(t.dataset.tt&&ctx&&p){readTime();}
   else if(t.dataset.e){db.email=t.value;save();updMail();}
   else if(t.id==='bk'){updMail();}
 });
-document.addEventListener('change',function(e){if(e.target.id==='bk')updMail();});
+document.addEventListener('change',function(e){if(e.target.id==='bk')updMail();else if(e.target.dataset&&e.target.dataset.tt)readTime();});
 
 init();render();
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('sw.js').catch(function(){})}
